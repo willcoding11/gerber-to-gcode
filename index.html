@@ -942,8 +942,10 @@ document.getElementById('btnGen').addEventListener('click', async () => {
 // ---- STL export ----
 function generateStl() {
   if (!state.gerber && !state.outline && !state.drill) { log('load a file first', 'err'); return null; }
-  const H = 1.0;          // everything extrudes 1 mm up
+  const BASE_H = 1.0;     // PCB base sheet height
+  const FEAT_H = 1.5;     // trace/pad/edge feature height on top of base
   const EDGE_W = 0.6;     // edge-cut wall thickness
+  const Z_BASE = 0, Z_TOP_BASE = BASE_H, Z_TOP_FEAT = BASE_H + FEAT_H;
 
   const out = ['solid pcb'];
   function tri(a,b,c) {
@@ -1025,7 +1027,53 @@ function generateStl() {
     return groups;
   }
 
-  // ---- copper: union traces+pads+regions, subtract drill holes ----
+  // Chain edge-cut line segments into closed loops (interior of board)
+  function chainSegments(traces, eps=0.01) {
+    const segs = traces.map(t => [[t.x1,t.y1],[t.x2,t.y2]]);
+    const used = new Array(segs.length).fill(false);
+    const loops = [];
+    for (let i=0;i<segs.length;i++) {
+      if (used[i]) continue;
+      used[i] = true;
+      const loop = [segs[i][0].slice(), segs[i][1].slice()];
+      let changed = true;
+      while (changed) {
+        changed = false;
+        const tail = loop[loop.length-1];
+        for (let j=0;j<segs.length;j++) {
+          if (used[j]) continue;
+          const [a,b] = segs[j];
+          if (Math.hypot(tail[0]-a[0],tail[1]-a[1]) < eps) { loop.push(b.slice()); used[j]=true; changed=true; break; }
+          if (Math.hypot(tail[0]-b[0],tail[1]-b[1]) < eps) { loop.push(a.slice()); used[j]=true; changed=true; break; }
+        }
+      }
+      if (loop.length >= 3) loops.push(loop);
+    }
+    return loops;
+  }
+
+  // drill holes as Clipper paths (reused for base + copper)
+  const drillPaths = (state.drill && state.drill.holes.length)
+    ? state.drill.holes.map(h => toClipperPath(circlePoly(h.x, h.y, h.d/2, 24)))
+    : [];
+
+  // ---- 1. Board base: interior of edge-cut outline, minus drill holes ----
+  if (state.outline && state.outline.traces.length) {
+    const loops = chainSegments(state.outline.traces);
+    if (loops.length) {
+      const baseUnion = clipUnion(loops.map(toClipperPath));
+      let groups;
+      if (drillPaths.length) {
+        const tree = clipDifferenceTree(baseUnion, drillPaths);
+        groups = polyTreeGroups(tree);
+      } else {
+        groups = baseUnion.map(p => ({outer: fromClipperPath(p), holes: []}));
+      }
+      for (const g of groups) extrudeWithHoles(g.outer, g.holes, Z_BASE, Z_TOP_BASE);
+    }
+  }
+
+  // ---- 2. Copper on top: traces+pads+regions unioned, drill holes subtracted ----
   if (state.gerber) {
     const paths = [];
     for (const t of state.gerber.traces) paths.push(toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,t.w)));
@@ -1033,21 +1081,20 @@ function generateStl() {
     for (const r of state.gerber.regions) paths.push(toClipperPath(r));
     const copper = clipUnion(paths);
     let groups;
-    if (state.drill && state.drill.holes.length) {
-      const holes = state.drill.holes.map(h => toClipperPath(circlePoly(h.x, h.y, h.d/2, 24)));
-      const tree = clipDifferenceTree(copper, holes);
+    if (drillPaths.length) {
+      const tree = clipDifferenceTree(copper, drillPaths);
       groups = polyTreeGroups(tree);
     } else {
       groups = copper.map(p => ({outer: fromClipperPath(p), holes: []}));
     }
-    for (const g of groups) extrudeWithHoles(g.outer, g.holes, 0, H);
+    for (const g of groups) extrudeWithHoles(g.outer, g.holes, Z_TOP_BASE, Z_TOP_FEAT);
   }
 
-  // ---- edge cut: thin wall along outline, subtract drill holes so they stay open ----
+  // ---- 3. Edge-cut ring on top of base (visible outline) ----
   if (state.outline && state.outline.traces.length) {
     const paths = state.outline.traces.map(t => toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,EDGE_W)));
     const edge = clipUnion(paths);
-    for (const p of edge) extrudeWithHoles(fromClipperPath(p), [], 0, H);
+    for (const p of edge) extrudeWithHoles(fromClipperPath(p), [], Z_TOP_BASE, Z_TOP_FEAT);
   }
 
   out.push('endsolid pcb');
