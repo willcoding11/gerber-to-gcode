@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <title>Gerber → Snapmaker G-code</title>
 <script src="https://cdn.jsdelivr.net/npm/js-clipper@1.0.1/clipper.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/earcut@2.2.4/dist/earcut.min.js"></script>
 <style>
   :root { --bg:#0f1115; --panel:#171a21; --ink:#e6e8ef; --muted:#8a93a6; --accent:#4ea1ff; --ok:#5ad18b; --warn:#ffb86b; --err:#ff6b6b; --line:#242837; }
   * { box-sizing:border-box; }
@@ -941,15 +942,12 @@ document.getElementById('btnGen').addEventListener('click', async () => {
 // ---- STL export ----
 function generateStl() {
   if (!state.gerber && !state.outline && !state.drill) { log('load a file first', 'err'); return null; }
-  const traceH = 1.0, edgeH = 2.0, edgeW = 2.0, holeH = 2.0, holeWall = 0.5;
+  const H = 1.0;          // everything extrudes 1 mm up
+  const EDGE_W = 0.6;     // edge-cut wall thickness
 
   const out = ['solid pcb'];
   function tri(a,b,c) {
-    const ux=b[0]-a[0], uy=b[1]-a[1], uz=b[2]-a[2];
-    const vx=c[0]-a[0], vy=c[1]-a[1], vz=c[2]-a[2];
-    let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
-    const L=Math.hypot(nx,ny,nz)||1; nx/=L; ny/=L; nz/=L;
-    out.push('facet normal '+nx+' '+ny+' '+nz);
+    out.push('facet normal 0 0 0');
     out.push(' outer loop');
     out.push('  vertex '+a[0]+' '+a[1]+' '+a[2]);
     out.push('  vertex '+b[0]+' '+b[1]+' '+b[2]);
@@ -957,111 +955,99 @@ function generateStl() {
     out.push(' endloop');
     out.push('endfacet');
   }
-  // ear-clipping triangulation (handles non-convex simple polygons)
-  function signedArea(p) { let s=0; for (let i=0;i<p.length;i++){const a=p[i],b=p[(i+1)%p.length]; s+=(b[0]-a[0])*(b[1]+a[1]);} return -s/2; }
-  function cross2(a,b,c) { return (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0]); }
-  function pointInTri(p,a,b,c) {
-    const d1=cross2(p,a,b), d2=cross2(p,b,c), d3=cross2(p,c,a);
-    const hasNeg = d1<0||d2<0||d3<0, hasPos = d1>0||d2>0||d3>0;
-    return !(hasNeg && hasPos);
-  }
-  function earClip(poly) {
-    let pts = poly.slice();
-    // dedupe consecutive
-    pts = pts.filter((p,i) => { const q = pts[(i-1+pts.length)%pts.length]; return Math.hypot(p[0]-q[0], p[1]-q[1]) > 1e-7; });
-    if (pts.length < 3) return [];
-    if (signedArea(pts) < 0) pts.reverse();
-    const idx = pts.map((_,i)=>i);
-    const tris = [];
-    let guard = 0;
-    while (idx.length > 3 && guard++ < pts.length*pts.length) {
-      let found = false;
-      for (let i=0;i<idx.length;i++) {
-        const i0 = idx[(i-1+idx.length)%idx.length], i1 = idx[i], i2 = idx[(i+1)%idx.length];
-        const a = pts[i0], b = pts[i1], c = pts[i2];
-        if (cross2(a,b,c) <= 0) continue; // not convex
-        let contains = false;
-        for (const k of idx) {
-          if (k===i0||k===i1||k===i2) continue;
-          if (pointInTri(pts[k],a,b,c)) { contains=true; break; }
-        }
-        if (contains) continue;
-        tris.push([a,b,c]);
-        idx.splice(i,1);
-        found = true; break;
+  // Extrude a polygon-with-holes (outer CCW, holes CW) from z=0 to z=H using earcut.
+  function extrudeWithHoles(outer, holes, z0, z1) {
+    if (!outer || outer.length < 3) return;
+    const flat = [];
+    const holeIdx = [];
+    for (const p of outer) flat.push(p[0], p[1]);
+    for (const hole of holes) {
+      if (hole.length < 3) continue;
+      holeIdx.push(flat.length / 2);
+      for (const p of hole) flat.push(p[0], p[1]);
+    }
+    const tris = earcut(flat, holeIdx);
+    const V = i => [flat[i*2], flat[i*2+1]];
+    // top + bottom
+    for (let i=0;i<tris.length;i+=3) {
+      const a=V(tris[i]), b=V(tris[i+1]), c=V(tris[i+2]);
+      tri([a[0],a[1],z1],[b[0],b[1],z1],[c[0],c[1],z1]);
+      tri([a[0],a[1],z0],[c[0],c[1],z0],[b[0],b[1],z0]);
+    }
+    // sides — walk each ring
+    function walls(ring) {
+      for (let i=0;i<ring.length;i++) {
+        const a=ring[i], b=ring[(i+1)%ring.length];
+        tri([a[0],a[1],z0],[b[0],b[1],z0],[b[0],b[1],z1]);
+        tri([a[0],a[1],z0],[b[0],b[1],z1],[a[0],a[1],z1]);
       }
-      if (!found) break;
     }
-    if (idx.length === 3) tris.push([pts[idx[0]], pts[idx[1]], pts[idx[2]]]);
-    return tris;
-  }
-  function extrudePoly(poly, z0, z1) {
-    const n = poly.length; if (n < 3) return;
-    const tris = earClip(poly);
-    for (const [a,b,c] of tris) {
-      tri([a[0],a[1],z1],[b[0],b[1],z1],[c[0],c[1],z1]);        // top (CCW up)
-      tri([a[0],a[1],z0],[c[0],c[1],z0],[b[0],b[1],z0]);        // bottom (reversed)
-    }
-    // sides — use original polygon winding (CCW after signedArea check)
-    const src = signedArea(poly) < 0 ? poly.slice().reverse() : poly;
-    for (let i=0;i<src.length;i++) {
-      const a=src[i], b=src[(i+1)%src.length];
-      tri([a[0],a[1],z0],[b[0],b[1],z0],[b[0],b[1],z1]);
-      tri([a[0],a[1],z0],[b[0],b[1],z1],[a[0],a[1],z1]);
-    }
-  }
-  // extrude a line segment as a box of width w, height h
-  function extrudeSeg(x1,y1,x2,y2,w,h) {
-    extrudePoly(segmentPoly(x1,y1,x2,y2,w), 0, h);
-  }
-  // hollow cylinder (ring): inner radius rIn, outer rOut, 0..h
-  function ring(cx,cy,rIn,rOut,h,seg=24) {
-    for (let i=0;i<seg;i++) {
-      const a0 = i/seg*Math.PI*2, a1 = (i+1)/seg*Math.PI*2;
-      const oi=[cx+Math.cos(a0)*rOut, cy+Math.sin(a0)*rOut];
-      const oj=[cx+Math.cos(a1)*rOut, cy+Math.sin(a1)*rOut];
-      const ii=[cx+Math.cos(a0)*rIn,  cy+Math.sin(a0)*rIn];
-      const ij=[cx+Math.cos(a1)*rIn,  cy+Math.sin(a1)*rIn];
-      // top annulus
-      tri([oi[0],oi[1],h],[oj[0],oj[1],h],[ij[0],ij[1],h]);
-      tri([oi[0],oi[1],h],[ij[0],ij[1],h],[ii[0],ii[1],h]);
-      // bottom annulus (reverse)
-      tri([oi[0],oi[1],0],[ii[0],ii[1],0],[ij[0],ij[1],0]);
-      tri([oi[0],oi[1],0],[ij[0],ij[1],0],[oj[0],oj[1],0]);
-      // outer wall
-      tri([oi[0],oi[1],0],[oj[0],oj[1],0],[oj[0],oj[1],h]);
-      tri([oi[0],oi[1],0],[oj[0],oj[1],h],[oi[0],oi[1],h]);
-      // inner wall (reverse)
-      tri([ii[0],ii[1],0],[ij[0],ij[1],h],[ij[0],ij[1],0]);
-      tri([ii[0],ii[1],0],[ii[0],ii[1],h],[ij[0],ij[1],h]);
-    }
+    walls(outer);
+    for (const h of holes) walls(h);
   }
 
-  // copper — force traces to 1 mm wide, ignore copper pours (regions), keep pads as-is.
-  // Union traces+pads together so overlaps don't break manifold.
+  // Helper: run Clipper union and return Paths
+  function clipUnion(paths) {
+    const c = new ClipperLib.Clipper();
+    c.AddPaths(paths, ClipperLib.PolyType.ptSubject, true);
+    const sol = new ClipperLib.Paths();
+    c.Execute(ClipperLib.ClipType.ctUnion, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+    return sol;
+  }
+  // Helper: difference subject - clip, returning PolyTree so we can read holes
+  function clipDifferenceTree(subject, clip) {
+    const c = new ClipperLib.Clipper();
+    c.AddPaths(subject, ClipperLib.PolyType.ptSubject, true);
+    c.AddPaths(clip, ClipperLib.PolyType.ptClip, true);
+    const tree = new ClipperLib.PolyTree();
+    c.Execute(ClipperLib.ClipType.ctDifference, tree, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+    return tree;
+  }
+  // Walk a PolyTree and emit {outer, holes} groups
+  function polyTreeGroups(tree) {
+    const groups = [];
+    function visit(node) {
+      for (const child of node.Childs()) {
+        if (!child.IsHole()) {
+          const outer = fromClipperPath(child.Contour());
+          const holes = [];
+          for (const grand of child.Childs()) {
+            if (grand.IsHole()) holes.push(fromClipperPath(grand.Contour()));
+            visit(grand); // handle islands inside holes
+          }
+          groups.push({outer, holes});
+        } else {
+          visit(child);
+        }
+      }
+    }
+    visit(tree);
+    return groups;
+  }
+
+  // ---- copper: union traces+pads+regions, subtract drill holes ----
   if (state.gerber) {
-    const TRACE_W = 1.0;
     const paths = [];
-    for (const t of state.gerber.traces) paths.push(toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,TRACE_W)));
+    for (const t of state.gerber.traces) paths.push(toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,t.w)));
     for (const p of state.gerber.pads) paths.push(toClipperPath(apertureToPoly(p.ap, p.x, p.y)));
-    const c = new ClipperLib.Clipper();
-    const sol = new ClipperLib.Paths();
-    c.AddPaths(paths, ClipperLib.PolyType.ptSubject, true);
-    c.Execute(ClipperLib.ClipType.ctUnion, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-    for (const path of sol) extrudePoly(fromClipperPath(path), 0, traceH);
+    for (const r of state.gerber.regions) paths.push(toClipperPath(r));
+    const copper = clipUnion(paths);
+    let groups;
+    if (state.drill && state.drill.holes.length) {
+      const holes = state.drill.holes.map(h => toClipperPath(circlePoly(h.x, h.y, h.d/2, 24)));
+      const tree = clipDifferenceTree(copper, holes);
+      groups = polyTreeGroups(tree);
+    } else {
+      groups = copper.map(p => ({outer: fromClipperPath(p), holes: []}));
+    }
+    for (const g of groups) extrudeWithHoles(g.outer, g.holes, 0, H);
   }
-  // edge cuts — union the thick walls before extrude
+
+  // ---- edge cut: thin wall along outline, subtract drill holes so they stay open ----
   if (state.outline && state.outline.traces.length) {
-    const paths = state.outline.traces.map(t => toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,edgeW)));
-    const c = new ClipperLib.Clipper();
-    const sol = new ClipperLib.Paths();
-    c.AddPaths(paths, ClipperLib.PolyType.ptSubject, true);
-    c.Execute(ClipperLib.ClipType.ctUnion, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-    for (const path of sol) extrudePoly(fromClipperPath(path), 0, edgeH);
-  }
-  // drill holes — hollow rings
-  if (state.drill) {
-    for (const h of state.drill.holes) ring(h.x, h.y, h.d/2, h.d/2+holeWall, holeH);
+    const paths = state.outline.traces.map(t => toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,EDGE_W)));
+    const edge = clipUnion(paths);
+    for (const p of edge) extrudeWithHoles(fromClipperPath(p), [], 0, H);
   }
 
   out.push('endsolid pcb');
