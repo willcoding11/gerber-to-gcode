@@ -942,8 +942,8 @@ document.getElementById('btnGen').addEventListener('click', async () => {
 // ---- STL export ----
 function generateStl() {
   if (!state.gerber && !state.outline && !state.drill) { log('load a file first', 'err'); return null; }
-  const BASE_H = 1.0;     // PCB base sheet height
-  const FEAT_H = 2.5;     // trace/pad/edge feature height on top of base
+  const BASE_H = 0.5;     // PCB base sheet height
+  const FEAT_H = 1.0;     // trace/pad/edge feature height on top of base
   const EDGE_W = 0.6;     // edge-cut wall thickness
   const Z_BASE = 0, Z_TOP_BASE = BASE_H, Z_TOP_FEAT = BASE_H + FEAT_H;
 
