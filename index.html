@@ -496,20 +496,17 @@ function apertureToPoly(ap, cx, cy) {
   if (ap.tmpl === 'C') return circlePoly(cx, cy, p0/2);
   if (ap.tmpl === 'R') return rectPoly(cx, cy, p0, p1);
   if (ap.tmpl === 'O') {
-    // obround
-    const w = p0, h = p1;
-    const r = Math.min(w,h)/2;
+    const w=p0, h=p1, r=Math.min(w,h)/2, seg=16, poly=[];
     if (w >= h) {
-      const poly = [];
-      poly.push(...circlePoly(cx+(w/2-r), cy, r, 16).slice(0,9));
-      poly.push(...circlePoly(cx-(w/2-r), cy, r, 16).slice(8,17));
-      return poly;
+      const cx1=cx+(w/2-r), cx2=cx-(w/2-r);
+      for (let i=0;i<=seg;i++){ const a=-Math.PI/2 + Math.PI*(i/seg); poly.push([cx1+Math.cos(a)*r, cy+Math.sin(a)*r]); }
+      for (let i=0;i<=seg;i++){ const a= Math.PI/2 + Math.PI*(i/seg); poly.push([cx2+Math.cos(a)*r, cy+Math.sin(a)*r]); }
     } else {
-      const poly = [];
-      poly.push(...circlePoly(cx, cy+(h/2-r), r, 16).slice(4,13));
-      poly.push(...circlePoly(cx, cy-(h/2-r), r, 16).slice(12,21).concat(circlePoly(cx, cy-(h/2-r), r,16).slice(0,4)));
-      return poly;
+      const cy1=cy+(h/2-r), cy2=cy-(h/2-r);
+      for (let i=0;i<=seg;i++){ const a=0        + Math.PI*(i/seg); poly.push([cx+Math.cos(a)*r, cy1+Math.sin(a)*r]); }
+      for (let i=0;i<=seg;i++){ const a=Math.PI  + Math.PI*(i/seg); poly.push([cx+Math.cos(a)*r, cy2+Math.sin(a)*r]); }
     }
+    return poly;
   }
   if (ap.tmpl === 'P') {
     // polygon — params: diameter, vertices, rotation
@@ -960,16 +957,55 @@ function generateStl() {
     out.push(' endloop');
     out.push('endfacet');
   }
-  // extrude a convex(ish) polygon as a prism between z0..z1 (fan-triangulation)
+  // ear-clipping triangulation (handles non-convex simple polygons)
+  function signedArea(p) { let s=0; for (let i=0;i<p.length;i++){const a=p[i],b=p[(i+1)%p.length]; s+=(b[0]-a[0])*(b[1]+a[1]);} return -s/2; }
+  function cross2(a,b,c) { return (b[0]-a[0])*(c[1]-a[1]) - (b[1]-a[1])*(c[0]-a[0]); }
+  function pointInTri(p,a,b,c) {
+    const d1=cross2(p,a,b), d2=cross2(p,b,c), d3=cross2(p,c,a);
+    const hasNeg = d1<0||d2<0||d3<0, hasPos = d1>0||d2>0||d3>0;
+    return !(hasNeg && hasPos);
+  }
+  function earClip(poly) {
+    let pts = poly.slice();
+    // dedupe consecutive
+    pts = pts.filter((p,i) => { const q = pts[(i-1+pts.length)%pts.length]; return Math.hypot(p[0]-q[0], p[1]-q[1]) > 1e-7; });
+    if (pts.length < 3) return [];
+    if (signedArea(pts) < 0) pts.reverse();
+    const idx = pts.map((_,i)=>i);
+    const tris = [];
+    let guard = 0;
+    while (idx.length > 3 && guard++ < pts.length*pts.length) {
+      let found = false;
+      for (let i=0;i<idx.length;i++) {
+        const i0 = idx[(i-1+idx.length)%idx.length], i1 = idx[i], i2 = idx[(i+1)%idx.length];
+        const a = pts[i0], b = pts[i1], c = pts[i2];
+        if (cross2(a,b,c) <= 0) continue; // not convex
+        let contains = false;
+        for (const k of idx) {
+          if (k===i0||k===i1||k===i2) continue;
+          if (pointInTri(pts[k],a,b,c)) { contains=true; break; }
+        }
+        if (contains) continue;
+        tris.push([a,b,c]);
+        idx.splice(i,1);
+        found = true; break;
+      }
+      if (!found) break;
+    }
+    if (idx.length === 3) tris.push([pts[idx[0]], pts[idx[1]], pts[idx[2]]]);
+    return tris;
+  }
   function extrudePoly(poly, z0, z1) {
     const n = poly.length; if (n < 3) return;
-    // top
-    for (let i=1;i<n-1;i++) tri([poly[0][0],poly[0][1],z1],[poly[i][0],poly[i][1],z1],[poly[i+1][0],poly[i+1][1],z1]);
-    // bottom (reversed winding)
-    for (let i=1;i<n-1;i++) tri([poly[0][0],poly[0][1],z0],[poly[i+1][0],poly[i+1][1],z0],[poly[i][0],poly[i][1],z0]);
-    // sides
-    for (let i=0;i<n;i++) {
-      const a=poly[i], b=poly[(i+1)%n];
+    const tris = earClip(poly);
+    for (const [a,b,c] of tris) {
+      tri([a[0],a[1],z1],[b[0],b[1],z1],[c[0],c[1],z1]);        // top (CCW up)
+      tri([a[0],a[1],z0],[c[0],c[1],z0],[b[0],b[1],z0]);        // bottom (reversed)
+    }
+    // sides — use original polygon winding (CCW after signedArea check)
+    const src = signedArea(poly) < 0 ? poly.slice().reverse() : poly;
+    for (let i=0;i<src.length;i++) {
+      const a=src[i], b=src[(i+1)%src.length];
       tri([a[0],a[1],z0],[b[0],b[1],z0],[b[0],b[1],z1]);
       tri([a[0],a[1],z0],[b[0],b[1],z1],[a[0],a[1],z1]);
     }
@@ -1001,15 +1037,19 @@ function generateStl() {
     }
   }
 
-  // copper — traces as boxes, pads & regions as extruded polygons
+  // copper — union all primitives first, then extrude each resulting polygon once
   if (state.gerber) {
-    for (const t of state.gerber.traces) extrudeSeg(t.x1,t.y1,t.x2,t.y2,t.w,traceH);
-    for (const p of state.gerber.pads) extrudePoly(apertureToPoly(p.ap, p.x, p.y), 0, traceH);
-    for (const r of state.gerber.regions) extrudePoly(r, 0, traceH);
+    const unioned = buildCopperUnion(state.gerber);
+    for (const path of unioned) extrudePoly(fromClipperPath(path), 0, traceH);
   }
-  // edge cuts — thick walls along outline
-  if (state.outline) {
-    for (const t of state.outline.traces) extrudeSeg(t.x1,t.y1,t.x2,t.y2,edgeW,edgeH);
+  // edge cuts — union the thick walls before extrude
+  if (state.outline && state.outline.traces.length) {
+    const paths = state.outline.traces.map(t => toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,edgeW)));
+    const c = new ClipperLib.Clipper();
+    const sol = new ClipperLib.Paths();
+    c.AddPaths(paths, ClipperLib.PolyType.ptSubject, true);
+    c.Execute(ClipperLib.ClipType.ctUnion, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+    for (const path of sol) extrudePoly(fromClipperPath(path), 0, edgeH);
   }
   // drill holes — hollow rings
   if (state.drill) {
