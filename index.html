@@ -1037,10 +1037,18 @@ function generateStl() {
     }
   }
 
-  // copper — union all primitives first, then extrude each resulting polygon once
+  // copper — force traces to 1 mm wide, ignore copper pours (regions), keep pads as-is.
+  // Union traces+pads together so overlaps don't break manifold.
   if (state.gerber) {
-    const unioned = buildCopperUnion(state.gerber);
-    for (const path of unioned) extrudePoly(fromClipperPath(path), 0, traceH);
+    const TRACE_W = 1.0;
+    const paths = [];
+    for (const t of state.gerber.traces) paths.push(toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,TRACE_W)));
+    for (const p of state.gerber.pads) paths.push(toClipperPath(apertureToPoly(p.ap, p.x, p.y)));
+    const c = new ClipperLib.Clipper();
+    const sol = new ClipperLib.Paths();
+    c.AddPaths(paths, ClipperLib.PolyType.ptSubject, true);
+    c.Execute(ClipperLib.ClipType.ctUnion, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
+    for (const path of sol) extrudePoly(fromClipperPath(path), 0, traceH);
   }
   // edge cuts — union the thick walls before extrude
   if (state.outline && state.outline.traces.length) {
