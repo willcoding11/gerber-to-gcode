@@ -2,1158 +2,207 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>Gerber → Snapmaker G-code</title>
+<title>PCB Studio</title>
+<link rel="stylesheet" href="css/app.css" />
 <script src="https://cdn.jsdelivr.net/npm/js-clipper@1.0.1/clipper.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/earcut@2.2.4/dist/earcut.min.js"></script>
-<style>
-  :root { --bg:#0f1115; --panel:#171a21; --ink:#e6e8ef; --muted:#8a93a6; --accent:#4ea1ff; --ok:#5ad18b; --warn:#ffb86b; --err:#ff6b6b; --line:#242837; }
-  * { box-sizing:border-box; }
-  body { margin:0; font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif; background:var(--bg); color:var(--ink); }
-  header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex; align-items:center; justify-content:space-between; }
-  header h1 { font-size:18px; margin:0; font-weight:600; }
-  header .sub { color:var(--muted); font-size:12px; }
-  main { display:grid; grid-template-columns: 420px 1fr; gap:0; height: calc(100vh - 57px); }
-  .panel { background:var(--panel); padding:16px 20px; overflow-y:auto; border-right:1px solid var(--line); }
-  .right { display:flex; flex-direction:column; min-height:0; min-width:0; overflow:hidden; }
-  canvas { background:#0a0c10; flex:1 1 auto; width:100%; height:100%; display:block; min-height:0; }
-  .row { margin:10px 0; }
-  .row label { display:block; font-size:12px; color:var(--muted); margin-bottom:4px; letter-spacing:.02em; }
-  .row input[type=number], .row select, .row input[type=text] { width:100%; padding:8px 10px; background:#0e1118; border:1px solid var(--line); color:var(--ink); border-radius:6px; font:inherit; }
-  .row input[type=file] { width:100%; padding:6px; background:#0e1118; border:1px dashed var(--line); color:var(--ink); border-radius:6px; font:inherit; }
-  .help { font-size:11px; color:var(--muted); margin-top:3px; line-height:1.4; }
-  .group { border:1px solid var(--line); border-radius:8px; padding:10px 14px; margin:14px 0; }
-  .group h3 { margin:2px 0 8px; font-size:13px; color:var(--accent); font-weight:600; text-transform:uppercase; letter-spacing:.08em; }
-  .two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-  button { background:var(--accent); color:#000; border:none; padding:10px 14px; border-radius:6px; font:inherit; font-weight:600; cursor:pointer; width:100%; margin-top:8px; }
-  button:hover { filter:brightness(1.1); }
-  button.secondary { background:transparent; color:var(--ink); border:1px solid var(--line); }
-  #log { padding:10px 14px; font:12px ui-monospace, Menlo, monospace; background:#0a0c10; border-top:1px solid var(--line); color:var(--muted); max-height:160px; overflow:auto; white-space:pre-wrap; }
-  #progress { height:4px; background:#0a0c10; border-top:1px solid var(--line); position:relative; }
-  #progress > div { height:100%; background:var(--accent); width:0%; transition:width .15s ease; }
-  #status { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; border:1px solid var(--line); font-size:11px; }
-  #status.done { border-color:var(--ok); color:var(--ok); }
-  #status.err { border-color:var(--err); color:var(--err); }
-  #status.busy { border-color:var(--warn); color:var(--warn); }
-  #status .dot { width:6px; height:6px; border-radius:50%; background:currentColor; }
-  #log .ok { color:var(--ok); } #log .warn { color:var(--warn); } #log .err { color:var(--err); }
-  details summary { cursor:pointer; color:var(--muted); font-size:12px; padding:4px 0; }
-  .legend { display:flex; gap:14px; font-size:11px; color:var(--muted); padding:6px 14px; border-top:1px solid var(--line); background:#0a0c10; }
-  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:middle; }
-</style>
 </head>
 <body>
+
 <header>
   <div>
-    <h1>Gerber → Snapmaker G-code</h1>
-    <div class="sub">Isolation routing · drill · cutout — single-file converter for Snapmaker CNC</div>
+    <h1>PCB Studio</h1>
+    <div class="sub">Gerber → G-code · Schematic · PCB layout</div>
   </div>
+  <nav class="tabs">
+    <button data-tab="convert" class="active">Convert</button>
+    <button data-tab="schematic">Schematic</button>
+    <button data-tab="pcb">PCB</button>
+  </nav>
+  <div class="spacer"></div>
   <div id="status"><span class="dot"></span><span id="statusText">ready</span></div>
 </header>
 
 <main>
-  <aside class="panel">
-    <div class="group">
-      <h3>Files from KiCad</h3>
-      <div class="row">
-        <label>Top copper layer (.gtl / .gbr)</label>
-        <input type="file" id="fTop" accept=".gbr,.gtl,.gbl,.gtp" />
-        <div class="help">In KiCad: <b>File → Plot</b>, check <b>F.Cu</b> (front copper), format Gerber. Output ends in <code>-F_Cu.gbr</code> or <code>.gtl</code>.</div>
+  <!-- ============ CONVERT TAB ============ -->
+  <section id="tab-convert" class="tab active">
+    <aside class="panel">
+      <div class="group">
+        <h3>Files from KiCad</h3>
+        <div class="row">
+          <label>Top copper layer (.gtl / .gbr)</label>
+          <input type="file" id="fTop" accept=".gbr,.gtl,.gbl,.gtp" />
+          <div class="help">In KiCad: <b>File → Plot</b>, check <b>F.Cu</b>, format Gerber.</div>
+        </div>
+        <div class="row">
+          <label>Drill file (.drl — Excellon)</label>
+          <input type="file" id="fDrl" accept=".drl,.xln,.txt" multiple />
+          <div class="help"><b>File → Fabrication Outputs → Drill Files</b>. Format Excellon, mm. Ctrl-click to select PTH+NPTH at once.</div>
+        </div>
+        <div class="row">
+          <label>Board outline (.gm1 / Edge.Cuts)</label>
+          <input type="file" id="fOut" accept=".gbr,.gm1,.gko,.gm2" />
+          <div class="help">Same Plot dialog — check <b>Edge.Cuts</b>.</div>
+        </div>
       </div>
-      <div class="row">
-        <label>Drill file (.drl — Excellon)</label>
-        <input type="file" id="fDrl" accept=".drl,.xln,.txt" multiple />
-        <div class="help">In KiCad: <b>File → Fabrication Outputs → Drill Files</b>. Format <b>Excellon</b>, units mm, <b>PTH + NPTH in a single file</b>.</div>
-      </div>
-      <div class="row">
-        <label>Board outline (.gm1 / Edge.Cuts)</label>
-        <input type="file" id="fOut" accept=".gbr,.gm1,.gko,.gm2" />
-        <div class="help">Same Plot dialog as copper — check <b>Edge.Cuts</b>. Output ends in <code>-Edge_Cuts.gm1</code>. This is the shape cut out of the stock.</div>
-      </div>
-    </div>
 
-    <div class="group">
-      <h3>Machine</h3>
-      <div class="row">
-        <label>Snapmaker model</label>
-        <select id="mModel">
-          <option value="A150">Original / A150 (160×160×145 mm)</option>
-          <option value="A250" selected>A250 (230×250×235 mm)</option>
-          <option value="A350">A350 (320×350×330 mm)</option>
-          <option value="Artisan">Artisan (400×400×400 mm)</option>
-        </select>
-        <div class="help">Printed on the box or in the Luban software. Used to warn if your board won't fit.</div>
+      <div class="group">
+        <h3>Machine</h3>
+        <div class="row">
+          <label>Snapmaker model</label>
+          <select id="mModel">
+            <option value="A150">Original / A150 (160×160×145 mm)</option>
+            <option value="A250" selected>A250 (230×250×235 mm)</option>
+            <option value="A350">A350 (320×350×330 mm)</option>
+            <option value="Artisan">Artisan (400×400×400 mm)</option>
+          </select>
+          <div class="help">On the box or in Luban. Used to warn if your board won't fit.</div>
+        </div>
       </div>
-    </div>
 
-    <div class="group">
-      <h3>Cutting bit</h3>
-      <div class="row">
-        <label>Bit type</label>
-        <select id="bType">
-          <option value="vbit" selected>V-bit (pointed, for traces)</option>
-          <option value="flat">Flat end mill</option>
-        </select>
-        <div class="help">V-bits are what you want for PCB traces — a narrow point that isolates thin lines. Flat mills are for drilling and cutting the outline.</div>
+      <div class="group">
+        <h3>Cutting bit</h3>
+        <div class="row">
+          <label>Bit type</label>
+          <select id="bType">
+            <option value="vbit" selected>V-bit (pointed, for traces)</option>
+            <option value="flat">Flat end mill</option>
+          </select>
+          <div class="help">V-bits for traces, flat mills for drilling and cutout.</div>
+        </div>
+        <div class="row" id="rowVangle">
+          <label>V-bit angle (°)</label>
+          <select id="bAngle"><option>20</option><option selected>30</option><option>45</option><option>60</option><option>90</option></select>
+          <div class="help">On the bit packaging. Smaller = finer.</div>
+        </div>
+        <div class="row">
+          <label>Bit tip width (mm)</label>
+          <input type="number" id="bDia" value="0.1" step="0.01" min="0.05" />
+          <div class="help">Flat at V-bit tip (~0.1 mm) or end-mill diameter.</div>
+        </div>
+        <div class="row">
+          <label>Drill bit diameter (mm)</label>
+          <input type="number" id="bDrill" value="0.8" step="0.05" min="0.2" />
+          <div class="help">Flat end mill matching your smallest drill hole.</div>
+        </div>
+        <div class="row">
+          <label>Cutout bit diameter (mm)</label>
+          <input type="number" id="bCutout" value="2.0" step="0.1" min="0.5" />
+          <div class="help">For board outline. 2 mm flat end mill is typical.</div>
+        </div>
       </div>
-      <div class="row" id="rowVangle">
-        <label>V-bit angle (°)</label>
-        <select id="bAngle">
-          <option>20</option><option selected>30</option><option>45</option><option>60</option><option>90</option>
-        </select>
-        <div class="help">Printed on the bit packaging. Smaller angle = finer traces but weaker tip. 30° is a common default.</div>
-      </div>
-      <div class="row">
-        <label>Bit tip width / end-mill diameter (mm)</label>
-        <input type="number" id="bDia" value="0.1" step="0.01" min="0.05" />
-        <div class="help">For V-bits this is the flat at the tip (~0.1 mm). For end mills, the cutter diameter (e.g. 0.8 mm for drilling, 2 mm for cutouts). On the bit sleeve or KiCad BOM for the drill file.</div>
-      </div>
-      <div class="row">
-        <label>Drill bit diameter for holes (mm)</label>
-        <input type="number" id="bDrill" value="0.8" step="0.05" min="0.2" />
-        <div class="help">Use a flat end mill with diameter matching your smallest drill hole. If holes differ in size, use the smallest; bigger holes get milled as circles.</div>
-      </div>
-      <div class="row">
-        <label>Cutout bit diameter (mm)</label>
-        <input type="number" id="bCutout" value="2.0" step="0.1" min="0.5" />
-        <div class="help">Used to cut the board outline out of the stock. 2 mm flat end mill is typical.</div>
-      </div>
-    </div>
 
-    <div class="group">
-      <h3>Depths &amp; passes</h3>
-      <div class="two">
-        <div class="row">
-          <label>Trace cut depth (mm)</label>
-          <input type="number" id="dTrace" value="0.08" step="0.01" />
-          <div class="help">Just deeper than copper. Standard 1 oz copper is 0.035 mm; 0.05–0.1 mm is safe.</div>
+      <div class="group">
+        <h3>Depths &amp; passes</h3>
+        <div class="two">
+          <div class="row"><label>Trace cut depth (mm)</label><input type="number" id="dTrace" value="0.08" step="0.01" /><div class="help">Just past 0.035 mm copper. 0.05–0.1 mm.</div></div>
+          <div class="row"><label>Isolation width (mm)</label><input type="number" id="dIso" value="0.3" step="0.05" /><div class="help">0.2–0.4 mm gap around traces.</div></div>
         </div>
-        <div class="row">
-          <label>Isolation width (mm)</label>
-          <input type="number" id="dIso" value="0.3" step="0.05" />
-          <div class="help">Gap to mill around each trace. 0.2–0.4 mm. Wider = safer electrical isolation, but eats small pad spacing.</div>
+        <div class="two">
+          <div class="row"><label>PCB thickness (mm)</label><input type="number" id="dBoard" value="1.6" step="0.1" /></div>
+          <div class="row"><label>Cut-through margin (mm)</label><input type="number" id="dMargin" value="0.3" step="0.1" /></div>
         </div>
+        <div class="two">
+          <div class="row"><label>Cutout pass depth (mm)</label><input type="number" id="dStep" value="0.4" step="0.1" /></div>
+          <div class="row"><label>Safe Z (mm)</label><input type="number" id="dSafe" value="3" step="0.5" /></div>
+        </div>
+        <div class="row"><label>Tabs around outline</label><input type="number" id="nTabs" value="4" min="0" step="1" /><div class="help">Hold board to stock during final cut.</div></div>
       </div>
-      <div class="two">
-        <div class="row">
-          <label>PCB (stock) thickness (mm)</label>
-          <input type="number" id="dBoard" value="1.6" step="0.1" />
-          <div class="help">Standard PCBs are 1.6 mm. Measure with calipers if unsure.</div>
-        </div>
-        <div class="row">
-          <label>Cut-through margin (mm)</label>
-          <input type="number" id="dMargin" value="0.3" step="0.1" />
-          <div class="help">How far past the bottom of the board the cutout bit goes, so the board releases cleanly.</div>
-        </div>
-      </div>
-      <div class="two">
-        <div class="row">
-          <label>Cutout pass depth (mm)</label>
-          <input type="number" id="dStep" value="0.4" step="0.1" />
-          <div class="help">Max depth per pass when cutting the outline. Smaller = gentler on bit. 0.3–0.5 mm for FR4.</div>
-        </div>
-        <div class="row">
-          <label>Safe Z (mm above board)</label>
-          <input type="number" id="dSafe" value="3" step="0.5" />
-          <div class="help">Travel height for rapid moves. 2–5 mm. Must clear any clamps.</div>
-        </div>
-      </div>
-      <div class="row">
-        <label>Tabs (count around outline, 0 = none)</label>
-        <input type="number" id="nTabs" value="4" min="0" step="1" />
-        <div class="help">Tabs hold the board to the stock during the last cut. 3–6 for small boards. Cut them away afterwards with a knife.</div>
-      </div>
-    </div>
 
-    <div class="group">
-      <h3>Speeds</h3>
-      <div class="two">
-        <div class="row">
-          <label>Feed rate XY (mm/min)</label>
-          <input type="number" id="sFeed" value="300" step="10" />
-          <div class="help">Horizontal cutting speed. 200–400 for PCB traces.</div>
+      <div class="group">
+        <h3>Speeds</h3>
+        <div class="two">
+          <div class="row"><label>Feed rate XY (mm/min)</label><input type="number" id="sFeed" value="300" step="10" /></div>
+          <div class="row"><label>Plunge rate Z (mm/min)</label><input type="number" id="sPlunge" value="80" step="10" /></div>
         </div>
-        <div class="row">
-          <label>Plunge rate Z (mm/min)</label>
-          <input type="number" id="sPlunge" value="80" step="10" />
-          <div class="help">Downward cutting speed. 60–100. Too fast snaps small bits.</div>
+        <div class="two">
+          <div class="row"><label>Travel rate (mm/min)</label><input type="number" id="sTravel" value="2000" step="100" /></div>
+          <div class="row"><label>Spindle RPM</label><input type="number" id="sRPM" value="12000" step="500" /></div>
         </div>
       </div>
-      <div class="two">
-        <div class="row">
-          <label>Travel rate (mm/min)</label>
-          <input type="number" id="sTravel" value="2000" step="100" />
-          <div class="help">Rapid moves at Safe Z. Snapmaker handles ~3000.</div>
-        </div>
-        <div class="row">
-          <label>Spindle RPM</label>
-          <input type="number" id="sRPM" value="12000" step="500" />
-          <div class="help">Snapmaker CNC max ~12000. Higher = cleaner cut.</div>
-        </div>
-      </div>
-    </div>
 
-    <div class="group">
-      <h3>Origin</h3>
-      <div class="row">
-        <label>Work origin (where you zero the machine)</label>
-        <select id="mOrigin">
-          <option value="bl" selected>Bottom-left corner of board</option>
-          <option value="center">Center of board</option>
-        </select>
-        <div class="help">Whichever matches how you set X0/Y0 on the Snapmaker. Bottom-left is easiest — jog the bit to the corner of your stock.</div>
+      <div class="group">
+        <h3>Origin</h3>
+        <div class="row">
+          <label>Work origin</label>
+          <select id="mOrigin"><option value="bl" selected>Bottom-left corner</option><option value="center">Center</option></select>
+        </div>
+        <div class="row">
+          <label>Mirror X</label>
+          <select id="mMirror"><option value="0" selected>No (top copper)</option><option value="1">Yes (bottom copper)</option></select>
+        </div>
       </div>
-      <div class="row">
-        <label>Mirror X (for bottom-copper boards)</label>
-        <select id="mMirror">
-          <option value="0" selected>No (top copper)</option>
-          <option value="1">Yes (bottom copper, flipped)</option>
-        </select>
-        <div class="help">Only flip if you're milling the back side of the PCB.</div>
+
+      <button id="btnGen">Generate G-code</button>
+      <button class="secondary" id="btnDl" disabled>Download .gcode</button>
+      <button class="secondary" id="btnStl">Export 3D model (.stl)</button>
+    </aside>
+
+    <section class="right">
+      <canvas id="cv-convert"></canvas>
+      <div class="legend">
+        <span><span class="sw" style="background:#ffcf5c"></span>Copper</span>
+        <span><span class="sw" style="background:#4ea1ff"></span>Isolation toolpath</span>
+        <span><span class="sw" style="background:#5ad18b"></span>Drill holes</span>
+        <span><span class="sw" style="background:#ff6b6b"></span>Outline cut</span>
       </div>
-    </div>
+    </section>
+  </section>
 
-    <button id="btnGen">Generate G-code</button>
-    <button class="secondary" id="btnDl" disabled>Download .gcode</button>
-    <button class="secondary" id="btnStl">Export 3D model (.stl)</button>
-    <div class="help" style="margin-top:4px">STL for 3D printing / previewing without a CNC. Traces & pads 1 mm thick, edge cuts 2 mm tall walls, drill holes rendered as hollow rings.</div>
-  </aside>
+  <!-- ============ SCHEMATIC TAB ============ -->
+  <section id="tab-schematic" class="tab">
+    <aside class="panel">
+      <div class="group">
+        <h3>Components</h3>
+        <div class="palette-item" data-type="led"><span class="name">LED</span><span class="pins">2 pins</span></div>
+        <div class="palette-item" data-type="resistor"><span class="name">Resistor</span><span class="pins">2 pins</span></div>
+        <div class="palette-item" data-type="capacitor"><span class="name">Capacitor</span><span class="pins">2 pins</span></div>
+        <div class="palette-item" data-type="pin"><span class="name">Pin / Header</span><span class="pins">1 pin</span></div>
+        <div class="palette-item" data-type="ic8"><span class="name">IC (DIP-8)</span><span class="pins">8 pins</span></div>
+        <div class="palette-item" data-type="ic14"><span class="name">IC (DIP-14)</span><span class="pins">14 pins</span></div>
+        <div class="palette-item" data-type="ic16"><span class="name">IC (DIP-16)</span><span class="pins">16 pins</span></div>
+        <div class="help" style="margin-top:8px">Click a component, then click on the grid to place it. Click a pin (yellow dot) to start a wire, then click another pin to finish. Drag components to rearrange. Backspace deletes selection. Alt-drag or middle-click to pan, scroll to zoom. Esc cancels.</div>
+      </div>
+      <div class="group">
+        <h3>Actions</h3>
+        <button class="secondary" id="btn-export-json">Export schematic (.json)</button>
+        <button class="secondary" id="btn-clear">Clear schematic</button>
+      </div>
+    </aside>
+    <section class="right">
+      <canvas id="cv-schematic"></canvas>
+      <div class="hint"><b>Tip:</b> the PCB tab will read this schematic and let you lay it out for milling.</div>
+    </section>
+  </section>
 
-  <section class="right">
-    <canvas id="cv"></canvas>
-    <div class="legend">
-      <span><span class="sw" style="background:#ffcf5c"></span>Copper</span>
-      <span><span class="sw" style="background:#4ea1ff"></span>Isolation toolpath</span>
-      <span><span class="sw" style="background:#5ad18b"></span>Drill holes</span>
-      <span><span class="sw" style="background:#ff6b6b"></span>Outline cut</span>
-    </div>
-    <div id="progress"><div></div></div>
-    <div id="log">Drop Gerber files on the left to start.</div>
+  <!-- ============ PCB TAB (placeholder) ============ -->
+  <section id="tab-pcb" class="tab">
+    <aside class="panel">
+      <div class="group">
+        <h3>PCB layout</h3>
+        <div class="help">Coming next: drag your schematic components into a board outline, auto-route nets, then export Gerber files or feed straight to the Convert tab for G-code.</div>
+      </div>
+    </aside>
+    <section class="right">
+      <canvas id="cv-pcb"></canvas>
+    </section>
   </section>
 </main>
 
+<footer>
+  <div id="progress"><div></div></div>
+  <div id="log">Ready. Pick a tab to start.</div>
+</footer>
+
+<script src="js/util.js"></script>
+<script src="js/parsers.js"></script>
+<script src="js/geometry.js"></script>
+<script src="js/converter.js"></script>
+<script src="js/schematic.js"></script>
 <script>
-"use strict";
-
-// ======================================================================
-// Logging
-// ======================================================================
-const logEl = document.getElementById('log');
-const statusEl = document.getElementById('status');
-const statusText = document.getElementById('statusText');
-const progressBar = document.querySelector('#progress > div');
-function log(msg, cls='') {
-  const line = document.createElement('div');
-  if (cls) line.className = cls;
-  line.textContent = msg;
-  logEl.appendChild(line);
-  logEl.scrollTop = logEl.scrollHeight;
-}
-function setStatus(s, kind='') {
-  statusText.textContent = s;
-  statusEl.className = kind;
-}
-function setProgress(pct) {
-  progressBar.style.width = Math.max(0, Math.min(100, pct)) + '%';
-}
-
-// ======================================================================
-// Minimal Gerber (RS-274X) parser — handles the subset KiCad emits
-// ======================================================================
-function parseGerber(text) {
-  const out = { traces: [], pads: [], regions: [], units: 'mm', bbox:{minX:Infinity,minY:Infinity,maxX:-Infinity,maxY:-Infinity} };
-  const apertures = {};
-  let fmt = { xInt:4, xDec:6, yInt:4, yDec:6, lz:true }; // leading zeros omitted by default
-  let unitScale = 1; // to mm
-  let curAp = null;
-  let curX = 0, curY = 0;
-  let mode = 'G01'; // interpolation
-  let inRegion = false;
-  let regionPts = [];
-  let quadrantMode = 'G75';
-
-  // strip comments G04
-  text = text.replace(/\r/g,'');
-
-  function parseCoord(s, isY) {
-    if (s == null) return isY ? curY : curX;
-    const neg = s.startsWith('-');
-    if (neg || s.startsWith('+')) s = s.slice(1);
-    const dec = isY ? fmt.yDec : fmt.xDec;
-    const intd = isY ? fmt.yInt : fmt.xInt;
-    let str = s;
-    // trailing zero handling: default leading-zeros omitted (LZ omit), so pad left
-    if (fmt.lz) str = str.padStart(intd+dec,'0');
-    else str = str.padEnd(intd+dec,'0');
-    const i = str.length - dec;
-    const whole = str.slice(0,i) || '0';
-    const frac = str.slice(i);
-    let v = parseFloat(whole + '.' + frac);
-    if (neg) v = -v;
-    return v * unitScale;
-  }
-  function bb(x,y) {
-    if (x<out.bbox.minX) out.bbox.minX=x;
-    if (y<out.bbox.minY) out.bbox.minY=y;
-    if (x>out.bbox.maxX) out.bbox.maxX=x;
-    if (y>out.bbox.maxY) out.bbox.maxY=y;
-  }
-
-  // Split into commands (split on *)
-  // Handle %...% parameter blocks too
-  const tokens = [];
-  let i = 0;
-  while (i < text.length) {
-    if (text[i] === '%') {
-      const end = text.indexOf('%', i+1);
-      if (end < 0) break;
-      const block = text.slice(i+1, end);
-      block.split('*').forEach(p => { if (p.trim()) tokens.push({param:true, v:p.trim()}); });
-      i = end + 1;
-    } else if (text[i] === '*' || text[i] === '\n' || text[i] === ' ' || text[i] === '\t') {
-      i++;
-    } else {
-      const end = text.indexOf('*', i);
-      if (end < 0) break;
-      const cmd = text.slice(i, end).trim();
-      if (cmd) tokens.push({param:false, v:cmd});
-      i = end + 1;
-    }
-  }
-
-  for (const t of tokens) {
-    const v = t.v;
-    if (t.param) {
-      if (v.startsWith('FS')) {
-        // FSLAX46Y46  -> leading-zero omitted, absolute, X=4.6, Y=4.6
-        const m = v.match(/FS([LT])([AI])X(\d)(\d)Y(\d)(\d)/);
-        if (m) { fmt.lz = m[1] === 'L'; fmt.xInt=+m[3]; fmt.xDec=+m[4]; fmt.yInt=+m[5]; fmt.yDec=+m[6]; }
-      } else if (v.startsWith('MO')) {
-        if (v.includes('MOIN')) { unitScale = 25.4; out.units='in'; }
-        else { unitScale = 1; out.units='mm'; }
-      } else if (v.startsWith('AD')) {
-        // ADDnn<template>,<params>
-        const m = v.match(/ADD(\d+)([A-Za-z_][A-Za-z0-9_]*)(?:,(.*))?/);
-        if (m) {
-          const id = +m[1], tmpl = m[2], pstr = m[3]||'';
-          const params = pstr ? pstr.split('X').map(parseFloat) : [];
-          apertures[id] = { tmpl, params };
-        }
-      } else if (v.startsWith('AM')) {
-        // aperture macro — skip
-      } else if (v.startsWith('LP') || v.startsWith('LM') || v.startsWith('LR') || v.startsWith('LS')) {
-        // level polarity / mirror / rotate / scale — ignore for now
-      }
-      continue;
-    }
-    // commands
-    if (/^G0?1\b/.test(v)) mode = 'G01';
-    else if (/^G0?2\b/.test(v)) mode = 'G02';
-    else if (/^G0?3\b/.test(v)) mode = 'G03';
-    else if (/^G74\b/.test(v)) quadrantMode='G74';
-    else if (/^G75\b/.test(v)) quadrantMode='G75';
-    else if (/^G36\b/.test(v)) { inRegion = true; regionPts = []; }
-    else if (/^G37\b/.test(v)) {
-      if (regionPts.length >= 3) out.regions.push(regionPts);
-      inRegion = false; regionPts = [];
-    }
-    else if (/^G54?D(\d+)/.test(v) || /^D(\d+)$/.test(v)) {
-      const m = v.match(/D(\d+)/);
-      if (m) curAp = +m[1];
-    }
-    // coord commands
-    const mc = v.match(/^(?:G0?[123])?(?:X(-?\d+))?(?:Y(-?\d+))?(?:I(-?\d+))?(?:J(-?\d+))?D0?([123])/);
-    if (mc) {
-      const nx = mc[1] != null ? parseCoord(mc[1], false) : curX;
-      const ny = mc[2] != null ? parseCoord(mc[2], true) : curY;
-      const iOff = mc[3] != null ? parseCoord(mc[3], false) : 0;
-      const jOff = mc[4] != null ? parseCoord(mc[4], true) : 0;
-      const op = +mc[5];
-      if (op === 2) {
-        // move
-        curX = nx; curY = ny;
-        if (inRegion) regionPts = [[curX,curY]];
-      } else if (op === 1) {
-        // draw — line or arc
-        let pts;
-        if (mode === 'G02' || mode === 'G03') {
-          // arc: center at (curX+I, curY+J)
-          const cxA = curX + iOff, cyA = curY + jOff;
-          const r0 = Math.hypot(curX-cxA, curY-cyA);
-          let a0 = Math.atan2(curY-cyA, curX-cxA);
-          let a1 = Math.atan2(ny-cyA, nx-cxA);
-          const cw = (mode === 'G02');
-          if (cw) { if (a1 >= a0) a1 -= Math.PI*2; }
-          else    { if (a1 <= a0) a1 += Math.PI*2; }
-          // full circle case when start==end
-          if (Math.abs(curX-nx) < 1e-9 && Math.abs(curY-ny) < 1e-9) {
-            a1 = a0 + (cw ? -Math.PI*2 : Math.PI*2);
-          }
-          const sweep = a1 - a0;
-          const steps = Math.max(6, Math.ceil(Math.abs(sweep) * r0 / 0.1));
-          pts = [];
-          for (let s=1; s<=steps; s++) {
-            const a = a0 + sweep * (s/steps);
-            pts.push([cxA + Math.cos(a)*r0, cyA + Math.sin(a)*r0]);
-          }
-        } else {
-          pts = [[nx, ny]];
-        }
-        if (inRegion) {
-          for (const [px,py] of pts) { regionPts.push([px,py]); bb(px,py); }
-        } else {
-          const ap = apertures[curAp];
-          const w = ap && ap.tmpl === 'C' ? ap.params[0] : (ap && ap.params[0]) || 0.1;
-          let px = curX, py = curY;
-          for (const [qx,qy] of pts) {
-            out.traces.push({ x1:px, y1:py, x2:qx, y2:qy, w });
-            bb(px-w/2, py-w/2); bb(px+w/2, py+w/2);
-            bb(qx-w/2, qy-w/2); bb(qx+w/2, qy+w/2);
-            px = qx; py = qy;
-          }
-        }
-        curX = nx; curY = ny;
-      } else if (op === 3) {
-        // flash
-        const ap = apertures[curAp];
-        if (ap) {
-          out.pads.push({ x:nx, y:ny, ap });
-          const r = (ap.params[0] || 0.1) / 2;
-          bb(nx-r, ny-r); bb(nx+r, ny+r);
-        }
-        curX = nx; curY = ny;
-      }
-    }
-  }
-
-  return out;
-}
-
-// ======================================================================
-// Excellon drill parser
-// ======================================================================
-function parseExcellon(text) {
-  const out = { holes: [] };
-  const tools = {};
-  let curTool = null;
-  let unitScale = 1;
-  let fmt = { int:3, dec:3, lz:false };
-  let format2 = false;
-  text = text.replace(/\r/g,'');
-  const lines = text.split('\n');
-  let inHeader = true;
-  for (let raw of lines) {
-    const line = raw.trim();
-    if (!line) continue;
-    if (line.startsWith(';')) continue;
-    if (line === 'M48') { inHeader = true; continue; }
-    if (line === '%' || line === 'G90' || line === 'G05') { inHeader = false; continue; }
-    if (line === 'M30' || line === 'M00') break;
-    if (line.startsWith('METRIC')) { unitScale = 1; format2 = line.includes('LZ') || line.includes('TZ'); continue; }
-    if (line.startsWith('INCH')) { unitScale = 25.4; continue; }
-    if (line.startsWith('FMAT')) continue;
-    // tool def: T01C0.800
-    let m = line.match(/^T(\d+)C([\d.]+)/);
-    if (m) { tools[+m[1]] = parseFloat(m[2]) * unitScale; continue; }
-    // tool select: T01
-    m = line.match(/^T(\d+)$/);
-    if (m) { curTool = +m[1]; continue; }
-    // coord: X...Y...
-    m = line.match(/X(-?[\d.]+)Y(-?[\d.]+)/);
-    if (m) {
-      const x = parseFloat(m[1]) * unitScale;
-      const y = parseFloat(m[2]) * unitScale;
-      out.holes.push({ x, y, d: tools[curTool] || 0.8 });
-    }
-  }
-  return out;
-}
-
-// ======================================================================
-// Geometry → polygons using Clipper (from CDN as ClipperLib global)
-// ======================================================================
-const SCALE = 100000; // Clipper needs integers
-function toClipperPath(pts) { return pts.map(p => ({X: Math.round(p[0]*SCALE), Y: Math.round(p[1]*SCALE)})); }
-function fromClipperPath(path) { return path.map(p => [p.X/SCALE, p.Y/SCALE]); }
-
-function circlePoly(cx, cy, r, seg=32) {
-  const pts = [];
-  for (let i=0;i<seg;i++) {
-    const a = (i/seg)*Math.PI*2;
-    pts.push([cx + Math.cos(a)*r, cy + Math.sin(a)*r]);
-  }
-  return pts;
-}
-function rectPoly(cx, cy, w, h) {
-  return [[cx-w/2,cy-h/2],[cx+w/2,cy-h/2],[cx+w/2,cy+h/2],[cx-w/2,cy+h/2]];
-}
-function segmentPoly(x1,y1,x2,y2,w) {
-  const dx = x2-x1, dy = y2-y1, L = Math.hypot(dx,dy) || 1;
-  const nx = -dy/L * w/2, ny = dx/L * w/2;
-  return [[x1+nx,y1+ny],[x2+nx,y2+ny],[x2-nx,y2-ny],[x1-nx,y1-ny]];
-}
-
-function apertureToPoly(ap, cx, cy) {
-  const [p0=0.1, p1=p0, p2=0] = ap.params;
-  if (ap.tmpl === 'C') return circlePoly(cx, cy, p0/2);
-  if (ap.tmpl === 'R') return rectPoly(cx, cy, p0, p1);
-  if (ap.tmpl === 'O') {
-    const w=p0, h=p1, r=Math.min(w,h)/2, seg=16, poly=[];
-    if (w >= h) {
-      const cx1=cx+(w/2-r), cx2=cx-(w/2-r);
-      for (let i=0;i<=seg;i++){ const a=-Math.PI/2 + Math.PI*(i/seg); poly.push([cx1+Math.cos(a)*r, cy+Math.sin(a)*r]); }
-      for (let i=0;i<=seg;i++){ const a= Math.PI/2 + Math.PI*(i/seg); poly.push([cx2+Math.cos(a)*r, cy+Math.sin(a)*r]); }
-    } else {
-      const cy1=cy+(h/2-r), cy2=cy-(h/2-r);
-      for (let i=0;i<=seg;i++){ const a=0        + Math.PI*(i/seg); poly.push([cx+Math.cos(a)*r, cy1+Math.sin(a)*r]); }
-      for (let i=0;i<=seg;i++){ const a=Math.PI  + Math.PI*(i/seg); poly.push([cx+Math.cos(a)*r, cy2+Math.sin(a)*r]); }
-    }
-    return poly;
-  }
-  if (ap.tmpl === 'P') {
-    // polygon — params: diameter, vertices, rotation
-    const d = p0, n = p1 || 6, rot = (p2||0)*Math.PI/180;
-    const pts = [];
-    for (let i=0;i<n;i++) {
-      const a = rot + i/n*Math.PI*2;
-      pts.push([cx+Math.cos(a)*d/2, cy+Math.sin(a)*d/2]);
-    }
-    return pts;
-  }
-  // fallback: circle
-  return circlePoly(cx, cy, p0/2);
-}
-
-// Union all copper primitives, then offset outward to get isolation paths
-function buildCopperUnion(gerber) {
-  const paths = [];
-  for (const t of gerber.traces) paths.push(toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,t.w)));
-  for (const p of gerber.pads) paths.push(toClipperPath(apertureToPoly(p.ap, p.x, p.y)));
-  for (const r of gerber.regions) paths.push(toClipperPath(r));
-
-  const c = new ClipperLib.Clipper();
-  const solution = new ClipperLib.Paths();
-  c.AddPaths(paths, ClipperLib.PolyType.ptSubject, true);
-  c.Execute(ClipperLib.ClipType.ctUnion, solution, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-  return solution;
-}
-
-function offsetPaths(paths, delta) {
-  const co = new ClipperLib.ClipperOffset(2, 0.25);
-  co.AddPaths(paths, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon);
-  const out = new ClipperLib.Paths();
-  co.Execute(out, delta * SCALE);
-  return out;
-}
-
-// ======================================================================
-// Rendering preview
-// ======================================================================
-const cv = document.getElementById('cv');
-const ctx = cv.getContext('2d');
-function fit() {
-  const r = cv.getBoundingClientRect();
-  const w = Math.max(100, r.width) * devicePixelRatio;
-  const h = Math.max(100, r.height) * devicePixelRatio;
-  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-}
-window.addEventListener('resize', () => { fit(); render(); });
-requestAnimationFrame(() => { fit(); render(); });
-
-let state = { gerber:null, drill:null, outline:null, isoPaths:null, cutPath:null };
-
-function render() {
-  fit();
-  ctx.fillStyle = '#0a0c10';
-  ctx.fillRect(0,0,cv.width,cv.height);
-  const { gerber, drill, outline, isoPaths, cutPath } = state;
-  if (!gerber && !drill && !outline) return;
-
-  // compute combined bbox
-  let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
-  function upd(x,y){ if(x<minX)minX=x; if(y<minY)minY=y; if(x>maxX)maxX=x; if(y>maxY)maxY=y; }
-  if (gerber) { upd(gerber.bbox.minX,gerber.bbox.minY); upd(gerber.bbox.maxX,gerber.bbox.maxY); }
-  if (outline) { upd(outline.bbox.minX,outline.bbox.minY); upd(outline.bbox.maxX,outline.bbox.maxY); }
-  if (drill) for (const h of drill.holes) { upd(h.x-h.d/2,h.y-h.d/2); upd(h.x+h.d/2,h.y+h.d/2); }
-  if (!isFinite(minX)) return;
-  const bw = maxX-minX, bh = maxY-minY;
-  const pad = 30 * devicePixelRatio;
-  const scale = Math.min((cv.width-pad*2)/bw, (cv.height-pad*2)/bh);
-  const ox = pad - minX*scale;
-  const oy = cv.height - pad + minY*scale; // flip Y
-  function X(x){ return ox + x*scale; }
-  function Y(y){ return oy - y*scale; }
-
-  // copper: yellow
-  if (gerber) {
-    ctx.fillStyle = '#ffcf5c';
-    ctx.strokeStyle = '#ffcf5c';
-    for (const t of gerber.traces) {
-      ctx.lineWidth = Math.max(1, t.w*scale);
-      ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(X(t.x1),Y(t.y1)); ctx.lineTo(X(t.x2),Y(t.y2)); ctx.stroke();
-    }
-    for (const p of gerber.pads) {
-      const poly = apertureToPoly(p.ap, p.x, p.y);
-      ctx.beginPath();
-      poly.forEach((pt,i) => { if (i===0) ctx.moveTo(X(pt[0]),Y(pt[1])); else ctx.lineTo(X(pt[0]),Y(pt[1])); });
-      ctx.closePath(); ctx.fill();
-    }
-    for (const r of gerber.regions) {
-      ctx.beginPath();
-      r.forEach((pt,i) => { if (i===0) ctx.moveTo(X(pt[0]),Y(pt[1])); else ctx.lineTo(X(pt[0]),Y(pt[1])); });
-      ctx.closePath(); ctx.fill();
-    }
-  }
-
-  // isolation toolpaths: blue
-  if (isoPaths) {
-    ctx.strokeStyle = '#4ea1ff';
-    ctx.lineWidth = 1.5 * devicePixelRatio;
-    for (const path of isoPaths) {
-      ctx.beginPath();
-      path.forEach((pt,i) => { if (i===0) ctx.moveTo(X(pt.X/SCALE),Y(pt.Y/SCALE)); else ctx.lineTo(X(pt.X/SCALE),Y(pt.Y/SCALE)); });
-      ctx.closePath(); ctx.stroke();
-    }
-  }
-
-  // drill holes: green
-  if (drill) {
-    ctx.strokeStyle = '#5ad18b';
-    ctx.lineWidth = 1.5 * devicePixelRatio;
-    for (const h of drill.holes) {
-      ctx.beginPath();
-      ctx.arc(X(h.x), Y(h.y), Math.max(3, h.d/2*scale), 0, Math.PI*2);
-      ctx.stroke();
-    }
-  }
-
-  // outline: red
-  if (outline) {
-    ctx.strokeStyle = '#ff6b6b';
-    ctx.lineWidth = 2 * devicePixelRatio;
-    for (const t of outline.traces) {
-      ctx.beginPath(); ctx.moveTo(X(t.x1),Y(t.y1)); ctx.lineTo(X(t.x2),Y(t.y2)); ctx.stroke();
-    }
-  }
-}
-
-// ======================================================================
-// File loading
-// ======================================================================
-async function readFile(inputId) {
-  const f = document.getElementById(inputId).files[0];
-  if (!f) return null;
-  return await f.text();
-}
-document.getElementById('fTop').addEventListener('change', async () => {
-  const t = await readFile('fTop'); if (!t) return;
-  try {
-    state.gerber = parseGerber(t);
-    const b = state.gerber.bbox;
-    log('loaded copper: '+state.gerber.traces.length+' traces, '+state.gerber.pads.length+' pads, '+state.gerber.regions.length+' regions', 'ok');
-    if (isFinite(b.minX)) log('  bbox: '+b.minX.toFixed(2)+','+b.minY.toFixed(2)+' → '+b.maxX.toFixed(2)+','+b.maxY.toFixed(2)+' mm');
-    else log('  WARNING: no geometry parsed — file may use unsupported features (arcs, aperture macros)', 'warn');
-  }
-  catch(e) { log('copper parse error: '+e.message, 'err'); }
-  render();
-});
-document.getElementById('fDrl').addEventListener('change', async (ev) => {
-  const files = [...ev.target.files];
-  if (!files.length) return;
-  const merged = { holes: [] };
-  for (const f of files) {
-    try {
-      const parsed = parseExcellon(await f.text());
-      merged.holes.push(...parsed.holes);
-      log('loaded '+f.name+': '+parsed.holes.length+' holes', 'ok');
-    } catch(e) { log(f.name+' parse error: '+e.message, 'err'); }
-  }
-  state.drill = merged;
-  log('total drill holes: '+merged.holes.length, 'ok');
-  render();
-});
-document.getElementById('fOut').addEventListener('change', async () => {
-  const t = await readFile('fOut'); if (!t) return;
-  try { state.outline = parseGerber(t); log('loaded outline: '+state.outline.traces.length+' segments', 'ok'); }
-  catch(e) { log('outline parse error: '+e.message, 'err'); }
-  render();
-});
-
-document.getElementById('bType').addEventListener('change', e => {
-  document.getElementById('rowVangle').style.display = e.target.value === 'vbit' ? '' : 'none';
-});
-
-// ======================================================================
-// G-code generation
-// ======================================================================
-function fmt(n) { return (Math.round(n*1000)/1000).toFixed(3); }
-
-function generateGcode() {
-  if (!state.gerber && !state.drill && !state.outline) { log('load at least one file first', 'err'); return null; }
-
-  const cfg = {
-    model: document.getElementById('mModel').value,
-    bType: document.getElementById('bType').value,
-    bAngle: +document.getElementById('bAngle').value,
-    bDia: +document.getElementById('bDia').value,
-    bDrill: +document.getElementById('bDrill').value,
-    bCutout: +document.getElementById('bCutout').value,
-    dTrace: +document.getElementById('dTrace').value,
-    dIso: +document.getElementById('dIso').value,
-    dBoard: +document.getElementById('dBoard').value,
-    dMargin: +document.getElementById('dMargin').value,
-    dStep: +document.getElementById('dStep').value,
-    dSafe: +document.getElementById('dSafe').value,
-    nTabs: +document.getElementById('nTabs').value,
-    sFeed: +document.getElementById('sFeed').value,
-    sPlunge: +document.getElementById('sPlunge').value,
-    sTravel: +document.getElementById('sTravel').value,
-    sRPM: +document.getElementById('sRPM').value,
-    origin: document.getElementById('mOrigin').value,
-    mirror: document.getElementById('mMirror').value === '1',
-  };
-
-  // determine effective bit tip width at cut depth (for V-bit taper)
-  let effW = cfg.bDia;
-  if (cfg.bType === 'vbit') {
-    effW = cfg.bDia + 2 * cfg.dTrace * Math.tan(cfg.bAngle*Math.PI/360);
-  }
-
-  // origin offset
-  let bbox = state.gerber?.bbox || state.outline?.bbox;
-  if (!bbox) bbox = {minX:0,minY:0,maxX:50,maxY:50};
-  let dx = 0, dy = 0;
-  if (cfg.origin === 'bl') { dx = -bbox.minX; dy = -bbox.minY; }
-  else if (cfg.origin === 'center') { dx = -(bbox.minX+bbox.maxX)/2; dy = -(bbox.minY+bbox.maxY)/2; }
-  const mirrorX = cfg.mirror ? -1 : 1;
-  const width = bbox.maxX - bbox.minX;
-  function tx(x){ return mirrorX*(x+dx) + (cfg.mirror?width:0); }
-  function ty(y){ return y+dy; }
-
-  // machine-bed size check
-  const bedSize = { A150:[160,160], A250:[230,250], A350:[320,350], Artisan:[400,400] }[cfg.model];
-  if (bedSize) {
-    const w = bbox.maxX-bbox.minX, h = bbox.maxY-bbox.minY;
-    if (w > bedSize[0] || h > bedSize[1]) log(`warning: board ${w.toFixed(1)}×${h.toFixed(1)} mm exceeds ${cfg.model} bed ${bedSize[0]}×${bedSize[1]} mm`,'warn');
-  }
-
-  const g = [];
-  // Snapmaker Luban header — these header_ lines tell the firmware what this is
-  g.push(';Header Start');
-  g.push(';header_type: cnc');
-  g.push(';tool_head: standardCNCToolheadForSM2');
-  g.push(';machine: '+cfg.model);
-  g.push(';file_total_lines: PLACEHOLDER');
-  g.push(';estimated_time(s): 0');
-  g.push(';max_x(mm): '+fmt((bbox.maxX-bbox.minX)));
-  g.push(';max_y(mm): '+fmt((bbox.maxY-bbox.minY)));
-  g.push(';max_z(mm): '+fmt(cfg.dBoard+cfg.dMargin));
-  g.push(';work_speed(mm/minute): '+cfg.sFeed);
-  g.push(';jog_speed(mm/minute): '+cfg.sTravel);
-  g.push(';power(%): 100');
-  g.push(';Header End');
-  g.push('');
-  g.push('G90 ; absolute');
-  g.push('G21 ; mm');
-  g.push('M3 S'+cfg.sRPM+' ; spindle on');
-  g.push('G4 P2 ; wait for spindle');
-  g.push('G0 Z'+fmt(cfg.dSafe)+' F'+cfg.sTravel);
-  g.push('');
-
-  // -------- 1. ISOLATION ROUTING --------
-  if (state.gerber) {
-    g.push('; ===== ISOLATION ROUTING =====');
-    const copper = buildCopperUnion(state.gerber);
-    // offset outward by bit_radius + iso_width/2 — one pass on each side = iso_width gap
-    const offsetDist = effW/2 + cfg.dIso/2;
-    const iso = offsetPaths(copper, offsetDist);
-    state.isoPaths = iso;
-    log('isolation: '+iso.length+' loops');
-    // detect island merge — if cuts collide, traces will be destroyed
-    if (copper.length > 1 && iso.length < copper.length) {
-      // binary-search the largest offset that keeps every island distinct
-      let lo = 0, hi = offsetDist;
-      for (let k=0;k<14;k++) {
-        const mid = (lo+hi)/2;
-        if (offsetPaths(copper, mid).length < copper.length) hi = mid; else lo = mid;
-      }
-      const maxSafeOff = lo;
-      const maxSafeIso = Math.max(0, 2*(maxSafeOff - effW/2));
-      log('WARNING: '+(copper.length - iso.length)+' copper islands merge — traces will fuse together', 'err');
-      // pick best of three suggestions
-      let suggestion;
-      if (maxSafeIso >= 0.05) {
-        suggestion = 'Lower "Isolation width" to '+maxSafeIso.toFixed(2)+' mm or less.';
-      } else {
-        // try shallower cut depth so V-bit taper is narrower
-        const targetEffW = Math.max(0.02, 2*maxSafeOff - 0.05); // leave 0.05mm iso
-        if (cfg.bType === 'vbit' && cfg.bAngle) {
-          const newDepth = (targetEffW - cfg.bDia) / (2*Math.tan(cfg.bAngle*Math.PI/360));
-          if (newDepth >= 0.02) {
-            suggestion = 'Lower "Trace cut depth" to '+newDepth.toFixed(2)+' mm and "Isolation width" to 0.05 mm.';
-          }
-        }
-        if (!suggestion) {
-          suggestion = 'Trace spacing in the design is too tight for any V-bit settings — increase Design Rules → Clearance in KiCad to '+(2*offsetDist).toFixed(2)+' mm.';
-        }
-      }
-      log('Suggestion: '+suggestion, 'warn');
-    }
-    for (const loop of iso) {
-      if (loop.length < 2) continue;
-      const first = loop[0];
-      g.push('G0 Z'+fmt(cfg.dSafe));
-      g.push('G0 X'+fmt(tx(first.X/SCALE))+' Y'+fmt(ty(first.Y/SCALE))+' F'+cfg.sTravel);
-      g.push('G1 Z'+fmt(-cfg.dTrace)+' F'+cfg.sPlunge);
-      for (let i=1;i<loop.length;i++) {
-        const p = loop[i];
-        g.push('G1 X'+fmt(tx(p.X/SCALE))+' Y'+fmt(ty(p.Y/SCALE))+' F'+cfg.sFeed);
-      }
-      // close loop
-      g.push('G1 X'+fmt(tx(first.X/SCALE))+' Y'+fmt(ty(first.Y/SCALE))+' F'+cfg.sFeed);
-    }
-    g.push('G0 Z'+fmt(cfg.dSafe));
-    g.push('');
-  }
-
-  // -------- 2. DRILLING --------
-  if (state.drill) {
-    g.push('; ===== DRILLING =====');
-    g.push('; PAUSE: change to drill bit '+cfg.bDrill+' mm, then resume');
-    g.push('M76 ; pause for tool change');
-    g.push('M3 S'+cfg.sRPM);
-    const drillZ = -(cfg.dBoard + cfg.dMargin);
-    for (const h of state.drill.holes) {
-      const X = tx(h.x), Y = ty(h.y);
-      if (h.d <= cfg.bDrill * 1.2) {
-        // plunge-drill
-        g.push('G0 Z'+fmt(cfg.dSafe));
-        g.push('G0 X'+fmt(X)+' Y'+fmt(Y)+' F'+cfg.sTravel);
-        // peck in 2 passes
-        g.push('G1 Z'+fmt(drillZ/2)+' F'+cfg.sPlunge);
-        g.push('G0 Z'+fmt(cfg.dSafe));
-        g.push('G0 X'+fmt(X)+' Y'+fmt(Y));
-        g.push('G1 Z'+fmt(drillZ)+' F'+cfg.sPlunge);
-        g.push('G0 Z'+fmt(cfg.dSafe));
-      } else {
-        // mill as circle (helical)
-        const r = (h.d - cfg.bDrill)/2;
-        g.push('G0 Z'+fmt(cfg.dSafe));
-        g.push('G0 X'+fmt(X+r)+' Y'+fmt(Y)+' F'+cfg.sTravel);
-        g.push('G1 Z0 F'+cfg.sPlunge);
-        const passes = Math.max(1, Math.ceil(cfg.dBoard / cfg.dStep));
-        for (let p=1;p<=passes;p++) {
-          const z = -Math.min(cfg.dBoard+cfg.dMargin, p*cfg.dStep);
-          g.push('G1 Z'+fmt(z)+' F'+cfg.sPlunge);
-          // full circle
-          const seg = 32;
-          for (let i=1;i<=seg;i++) {
-            const a = i/seg*Math.PI*2;
-            g.push('G1 X'+fmt(X+Math.cos(a)*r)+' Y'+fmt(Y+Math.sin(a)*r)+' F'+cfg.sFeed);
-          }
-        }
-        g.push('G0 Z'+fmt(cfg.dSafe));
-      }
-    }
-    g.push('');
-  }
-
-  // -------- 3. OUTLINE CUTOUT --------
-  if (state.outline) {
-    g.push('; ===== OUTLINE CUTOUT =====');
-    g.push('; PAUSE: change to '+cfg.bCutout+' mm flat end mill, then resume');
-    g.push('M76 ; pause for tool change');
-    g.push('M3 S'+cfg.sRPM);
-
-    // Collect outline segments as a polyline (assume simple rectangle for v1; otherwise trace order)
-    const segs = state.outline.traces.map(t => [[t.x1,t.y1],[t.x2,t.y2]]);
-    const totalLen = segs.reduce((s,[a,b]) => s + Math.hypot(b[0]-a[0], b[1]-a[1]), 0);
-    const cutD = cfg.dBoard + cfg.dMargin;
-    const passes = Math.max(1, Math.ceil(cutD / cfg.dStep));
-
-    // build tab positions along cumulative length
-    const tabLocs = [];
-    if (cfg.nTabs > 0) {
-      for (let i=0;i<cfg.nTabs;i++) tabLocs.push(totalLen * (i+0.5) / cfg.nTabs);
-    }
-    const tabWidth = 2; // mm tab width
-    const tabHeight = 0.5; // mm un-cut depth
-
-    for (let pass=1; pass<=passes; pass++) {
-      const z = -Math.min(cutD, pass*cfg.dStep);
-      const tabZ = -Math.max(0, cutD - tabHeight);
-      const isTabPass = pass === passes && cfg.nTabs > 0;
-      let cum = 0;
-      let prev = null;
-      const EPS = 0.005;
-      for (const [a,b] of segs) {
-        const needsJump = !prev || Math.hypot(a[0]-prev[0], a[1]-prev[1]) > EPS;
-        if (needsJump) {
-          g.push('G0 Z'+fmt(cfg.dSafe));
-          g.push('G0 X'+fmt(tx(a[0]))+' Y'+fmt(ty(a[1]))+' F'+cfg.sTravel);
-          g.push('G1 Z'+fmt(z)+' F'+cfg.sPlunge);
-        }
-        const sx=a[0], sy=a[1], ex=b[0], ey=b[1];
-        const L = Math.hypot(ex-sx, ey-sy);
-        // check tabs crossing this segment
-        let lastT = 0;
-        const cuts = [];
-        if (isTabPass) {
-          for (const loc of tabLocs) {
-            if (loc >= cum && loc <= cum+L) {
-              const t0 = (loc - tabWidth/2 - cum)/L;
-              const t1 = (loc + tabWidth/2 - cum)/L;
-              cuts.push([Math.max(0,t0), Math.min(1,t1)]);
-            }
-          }
-        }
-        cuts.sort((a,b)=>a[0]-b[0]);
-        let tcur = 0;
-        for (const [t0,t1] of cuts) {
-          if (t0 > tcur) {
-            const px = sx + (ex-sx)*t0, py = sy + (ey-sy)*t0;
-            g.push('G1 X'+fmt(tx(px))+' Y'+fmt(ty(py))+' Z'+fmt(z)+' F'+cfg.sFeed);
-          }
-          // over the tab: rise to tabZ
-          const tx0 = sx + (ex-sx)*t0, ty0 = sy + (ey-sy)*t0;
-          const tx1 = sx + (ex-sx)*t1, ty1 = sy + (ey-sy)*t1;
-          g.push('G1 X'+fmt(tx(tx0))+' Y'+fmt(ty(ty0))+' Z'+fmt(tabZ));
-          g.push('G1 X'+fmt(tx(tx1))+' Y'+fmt(ty(ty1))+' Z'+fmt(tabZ));
-          g.push('G1 Z'+fmt(z));
-          tcur = t1;
-        }
-        g.push('G1 X'+fmt(tx(ex))+' Y'+fmt(ty(ey))+' F'+cfg.sFeed);
-        cum += L;
-        prev = b;
-      }
-      g.push('G0 Z'+fmt(cfg.dSafe));
-    }
-    g.push('');
-  }
-
-  // End
-  g.push('; ===== END =====');
-  g.push('G0 Z'+fmt(cfg.dSafe+5));
-  g.push('G0 X0 Y0 F'+cfg.sTravel);
-  g.push('M5 ; spindle off');
-  g.push('M30');
-
-  // fill in total line count
-  const lines = g.length;
-  for (let i=0;i<g.length;i++) if (g[i].includes('file_total_lines: PLACEHOLDER')) g[i] = ';file_total_lines: '+lines;
-
-  return g.join('\n');
-}
-
-document.getElementById('btnGen').addEventListener('click', async () => {
-  logEl.innerHTML = '';
-  setStatus('generating…', 'busy');
-  setProgress(5);
-  await new Promise(r => setTimeout(r, 10));
-  try {
-    setProgress(30);
-    const gcode = generateGcode();
-    setProgress(90);
-    if (!gcode) { setStatus('ready'); setProgress(0); return; }
-    window._gcode = gcode;
-    document.getElementById('btnDl').disabled = false;
-    log('G-code generated: '+gcode.split('\n').length+' lines', 'ok');
-    setStatus('done', 'done');
-    setProgress(100);
-    render();
-    setTimeout(() => setProgress(0), 1200);
-  } catch(e) {
-    log('error: '+e.message, 'err');
-    console.error(e);
-    setStatus('error', 'err');
-    setProgress(0);
-  }
-});
-// ---- STL export ----
-function generateStl() {
-  if (!state.gerber && !state.outline && !state.drill) { log('load a file first', 'err'); return null; }
-  const BASE_H = 0.5;     // PCB base sheet height
-  const FEAT_H = 1.0;     // trace/pad/edge feature height on top of base
-  const EDGE_W = 0.6;     // edge-cut wall thickness
-  const Z_BASE = 0, Z_TOP_BASE = BASE_H, Z_TOP_FEAT = BASE_H + FEAT_H;
-
-  const out = ['solid pcb'];
-  function tri(a,b,c) {
-    out.push('facet normal 0 0 0');
-    out.push(' outer loop');
-    out.push('  vertex '+a[0]+' '+a[1]+' '+a[2]);
-    out.push('  vertex '+b[0]+' '+b[1]+' '+b[2]);
-    out.push('  vertex '+c[0]+' '+c[1]+' '+c[2]);
-    out.push(' endloop');
-    out.push('endfacet');
-  }
-  // Extrude a polygon-with-holes (outer CCW, holes CW) from z=0 to z=H using earcut.
-  function extrudeWithHoles(outer, holes, z0, z1) {
-    if (!outer || outer.length < 3) return;
-    const flat = [];
-    const holeIdx = [];
-    for (const p of outer) flat.push(p[0], p[1]);
-    for (const hole of holes) {
-      if (hole.length < 3) continue;
-      holeIdx.push(flat.length / 2);
-      for (const p of hole) flat.push(p[0], p[1]);
-    }
-    const tris = earcut(flat, holeIdx);
-    const V = i => [flat[i*2], flat[i*2+1]];
-    // top + bottom
-    for (let i=0;i<tris.length;i+=3) {
-      const a=V(tris[i]), b=V(tris[i+1]), c=V(tris[i+2]);
-      tri([a[0],a[1],z1],[b[0],b[1],z1],[c[0],c[1],z1]);
-      tri([a[0],a[1],z0],[c[0],c[1],z0],[b[0],b[1],z0]);
-    }
-    // sides — walk each ring
-    function walls(ring) {
-      for (let i=0;i<ring.length;i++) {
-        const a=ring[i], b=ring[(i+1)%ring.length];
-        tri([a[0],a[1],z0],[b[0],b[1],z0],[b[0],b[1],z1]);
-        tri([a[0],a[1],z0],[b[0],b[1],z1],[a[0],a[1],z1]);
-      }
-    }
-    walls(outer);
-    for (const h of holes) walls(h);
-  }
-
-  // Helper: run Clipper union and return Paths
-  function clipUnion(paths) {
-    const c = new ClipperLib.Clipper();
-    c.AddPaths(paths, ClipperLib.PolyType.ptSubject, true);
-    const sol = new ClipperLib.Paths();
-    c.Execute(ClipperLib.ClipType.ctUnion, sol, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-    return sol;
-  }
-  // Helper: difference subject - clip, returning PolyTree so we can read holes
-  function clipDifferenceTree(subject, clip) {
-    const c = new ClipperLib.Clipper();
-    c.AddPaths(subject, ClipperLib.PolyType.ptSubject, true);
-    c.AddPaths(clip, ClipperLib.PolyType.ptClip, true);
-    const tree = new ClipperLib.PolyTree();
-    c.Execute(ClipperLib.ClipType.ctDifference, tree, ClipperLib.PolyFillType.pftNonZero, ClipperLib.PolyFillType.pftNonZero);
-    return tree;
-  }
-  // Walk a PolyTree and emit {outer, holes} groups
-  function polyTreeGroups(tree) {
-    const groups = [];
-    function visit(node) {
-      for (const child of node.Childs()) {
-        if (!child.IsHole()) {
-          const outer = fromClipperPath(child.Contour());
-          const holes = [];
-          for (const grand of child.Childs()) {
-            if (grand.IsHole()) holes.push(fromClipperPath(grand.Contour()));
-            visit(grand); // handle islands inside holes
-          }
-          groups.push({outer, holes});
-        } else {
-          visit(child);
-        }
-      }
-    }
-    visit(tree);
-    return groups;
-  }
-
-  // Chain edge-cut line segments into closed loops (interior of board)
-  function chainSegments(traces, eps=0.01) {
-    const segs = traces.map(t => [[t.x1,t.y1],[t.x2,t.y2]]);
-    const used = new Array(segs.length).fill(false);
-    const loops = [];
-    for (let i=0;i<segs.length;i++) {
-      if (used[i]) continue;
-      used[i] = true;
-      const loop = [segs[i][0].slice(), segs[i][1].slice()];
-      let changed = true;
-      while (changed) {
-        changed = false;
-        const tail = loop[loop.length-1];
-        for (let j=0;j<segs.length;j++) {
-          if (used[j]) continue;
-          const [a,b] = segs[j];
-          if (Math.hypot(tail[0]-a[0],tail[1]-a[1]) < eps) { loop.push(b.slice()); used[j]=true; changed=true; break; }
-          if (Math.hypot(tail[0]-b[0],tail[1]-b[1]) < eps) { loop.push(a.slice()); used[j]=true; changed=true; break; }
-        }
-      }
-      if (loop.length >= 3) loops.push(loop);
-    }
-    return loops;
-  }
-
-  // drill holes as Clipper paths (reused for base + copper)
-  const drillPaths = (state.drill && state.drill.holes.length)
-    ? state.drill.holes.map(h => toClipperPath(circlePoly(h.x, h.y, h.d/2, 24)))
-    : [];
-
-  // ---- 1. Board base: interior of edge-cut outline, minus drill holes ----
-  if (state.outline && state.outline.traces.length) {
-    const loops = chainSegments(state.outline.traces);
-    if (loops.length) {
-      const baseUnion = clipUnion(loops.map(toClipperPath));
-      let groups;
-      if (drillPaths.length) {
-        const tree = clipDifferenceTree(baseUnion, drillPaths);
-        groups = polyTreeGroups(tree);
-      } else {
-        groups = baseUnion.map(p => ({outer: fromClipperPath(p), holes: []}));
-      }
-      for (const g of groups) extrudeWithHoles(g.outer, g.holes, Z_BASE, Z_TOP_BASE);
-    }
-  }
-
-  // ---- 2. Copper on top: traces+pads+regions unioned, drill holes subtracted ----
-  if (state.gerber) {
-    const paths = [];
-    for (const t of state.gerber.traces) paths.push(toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,t.w)));
-    for (const p of state.gerber.pads) paths.push(toClipperPath(apertureToPoly(p.ap, p.x, p.y)));
-    for (const r of state.gerber.regions) paths.push(toClipperPath(r));
-    const copper = clipUnion(paths);
-    let groups;
-    if (drillPaths.length) {
-      const tree = clipDifferenceTree(copper, drillPaths);
-      groups = polyTreeGroups(tree);
-    } else {
-      groups = copper.map(p => ({outer: fromClipperPath(p), holes: []}));
-    }
-    for (const g of groups) extrudeWithHoles(g.outer, g.holes, Z_TOP_BASE, Z_TOP_FEAT);
-  }
-
-  // ---- 3. Edge-cut ring on top of base (visible outline) ----
-  if (state.outline && state.outline.traces.length) {
-    const paths = state.outline.traces.map(t => toClipperPath(segmentPoly(t.x1,t.y1,t.x2,t.y2,EDGE_W)));
-    const edge = clipUnion(paths);
-    for (const p of edge) extrudeWithHoles(fromClipperPath(p), [], Z_TOP_BASE, Z_TOP_FEAT);
-  }
-
-  out.push('endsolid pcb');
-  return out.join('\n');
-}
-document.getElementById('btnStl').addEventListener('click', () => {
-  setStatus('building STL…','busy'); setProgress(30);
-  try {
-    const stl = generateStl();
-    if (!stl) { setStatus('ready'); setProgress(0); return; }
-    const blob = new Blob([stl], {type:'model/stl'});
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob); a.download = 'pcb.stl'; a.click();
-    log('STL exported: '+Math.round(stl.length/1024)+' KB','ok');
-    setStatus('done','done'); setProgress(100);
-    setTimeout(()=>setProgress(0), 1200);
-  } catch(e) { log('stl error: '+e.message,'err'); setStatus('error','err'); setProgress(0); console.error(e); }
-});
-
-document.getElementById('btnDl').addEventListener('click', () => {
-  if (!window._gcode) return;
-  const blob = new Blob([window._gcode], {type:'text/plain'});
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'pcb.cnc.gcode';
-  a.click();
-});
-
-render();
+  UI.initTabs();
+  Converter.init();
+  Schematic.init();
 </script>
 </body>
 </html>
