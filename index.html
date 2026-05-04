@@ -769,6 +769,36 @@ function generateGcode() {
     const iso = offsetPaths(copper, offsetDist);
     state.isoPaths = iso;
     log('isolation: '+iso.length+' loops');
+    // detect island merge — if cuts collide, traces will be destroyed
+    if (copper.length > 1 && iso.length < copper.length) {
+      // binary-search the largest offset that keeps every island distinct
+      let lo = 0, hi = offsetDist;
+      for (let k=0;k<14;k++) {
+        const mid = (lo+hi)/2;
+        if (offsetPaths(copper, mid).length < copper.length) hi = mid; else lo = mid;
+      }
+      const maxSafeOff = lo;
+      const maxSafeIso = Math.max(0, 2*(maxSafeOff - effW/2));
+      log('WARNING: '+(copper.length - iso.length)+' copper islands merge — traces will fuse together', 'err');
+      // pick best of three suggestions
+      let suggestion;
+      if (maxSafeIso >= 0.05) {
+        suggestion = 'Lower "Isolation width" to '+maxSafeIso.toFixed(2)+' mm or less.';
+      } else {
+        // try shallower cut depth so V-bit taper is narrower
+        const targetEffW = Math.max(0.02, 2*maxSafeOff - 0.05); // leave 0.05mm iso
+        if (cfg.bType === 'vbit' && cfg.bAngle) {
+          const newDepth = (targetEffW - cfg.bDia) / (2*Math.tan(cfg.bAngle*Math.PI/360));
+          if (newDepth >= 0.02) {
+            suggestion = 'Lower "Trace cut depth" to '+newDepth.toFixed(2)+' mm and "Isolation width" to 0.05 mm.';
+          }
+        }
+        if (!suggestion) {
+          suggestion = 'Trace spacing in the design is too tight for any V-bit settings — increase Design Rules → Clearance in KiCad to '+(2*offsetDist).toFixed(2)+' mm.';
+        }
+      }
+      log('Suggestion: '+suggestion, 'warn');
+    }
     for (const loop of iso) {
       if (loop.length < 2) continue;
       const first = loop[0];
