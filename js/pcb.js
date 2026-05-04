@@ -293,18 +293,26 @@ const PCB = (() => {
   }
 
   // -------- Mouse --------
+  const SNAP = 0.5; // mm — components snap to 0.5 mm grid
+  function snap(v) { return Math.round(v / SNAP) * SNAP; }
+
   function bind() {
+    let panning = null;
+
     cv.addEventListener('mousemove', e => {
       const rect = cv.getBoundingClientRect();
       const sx = (e.clientX - rect.left) * devicePixelRatio;
       const sy = (e.clientY - rect.top) * devicePixelRatio;
       state.hover = [sx, sy];
-      if (state.dragging) {
+      if (panning) {
+        state.view.tx = panning.tx + (e.clientX - panning.cx);
+        state.view.ty = panning.ty + (e.clientY - panning.cy);
+      } else if (state.dragging) {
         const [wx, wy] = s2w(sx, sy);
         const c = state.components.find(x => x.id === state.dragging.compId);
         if (c) {
-          c.x = Math.max(2, Math.min(state.outline.w-2, wx + state.dragging.dx));
-          c.y = Math.max(2, Math.min(state.outline.h-2, wy + state.dragging.dy));
+          c.x = snap(Math.max(2, Math.min(state.outline.w-2, wx + state.dragging.dx)));
+          c.y = snap(Math.max(2, Math.min(state.outline.h-2, wy + state.dragging.dy)));
           // invalidate routes touching this component
           for (const n of state.nets) if (n.from.compId === c.id || n.to.compId === c.id) { n.segs=[]; n.routed=false; }
         }
@@ -312,12 +320,16 @@ const PCB = (() => {
       render();
     });
     cv.addEventListener('mousedown', e => {
-      if (e.button !== 0) return;
       const rect = cv.getBoundingClientRect();
       const sx = (e.clientX - rect.left) * devicePixelRatio;
       const sy = (e.clientY - rect.top) * devicePixelRatio;
+      // pan with middle-click or alt-drag — same as Schematic
+      if (e.button === 1 || (e.button === 0 && e.altKey)) {
+        panning = { tx: state.view.tx, ty: state.view.ty, cx: e.clientX, cy: e.clientY };
+        e.preventDefault(); return;
+      }
+      if (e.button !== 0) return;
       const [wx, wy] = s2w(sx, sy);
-      // find component
       for (let i=state.components.length-1;i>=0;i--) {
         const c = state.components[i];
         const def = Schematic.COMPONENTS[c.type];
@@ -327,7 +339,8 @@ const PCB = (() => {
         }
       }
     });
-    cv.addEventListener('mouseup', () => { state.dragging = null; });
+    cv.addEventListener('mouseup', () => { state.dragging = null; panning = null; });
+    cv.addEventListener('contextmenu', e => e.preventDefault());
     cv.addEventListener('wheel', e => {
       e.preventDefault();
       const rect = cv.getBoundingClientRect();
