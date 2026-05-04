@@ -175,16 +175,43 @@
     </section>
   </section>
 
-  <!-- ============ PCB TAB (placeholder) ============ -->
+  <!-- ============ PCB TAB ============ -->
   <section id="tab-pcb" class="tab">
     <aside class="panel">
       <div class="group">
-        <h3>PCB layout</h3>
-        <div class="help">Coming next: drag your schematic components into a board outline, auto-route nets, then export Gerber files or feed straight to the Convert tab for G-code.</div>
+        <h3>From schematic</h3>
+        <button class="secondary" id="btn-import">Import / refresh from schematic</button>
+        <div class="help">Pulls components and connections from the Schematic tab. You can rearrange them on the board below.</div>
+      </div>
+
+      <div class="group">
+        <h3>Board outline</h3>
+        <div class="two">
+          <div class="row"><label>Width (mm)</label><input type="number" id="pcbW" value="50" min="10" step="1" /></div>
+          <div class="row"><label>Height (mm)</label><input type="number" id="pcbH" value="40" min="10" step="1" /></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h3>Routing</h3>
+        <div class="two">
+          <div class="row"><label>Trace width (mm)</label><input type="number" id="pcbTW" value="0.4" step="0.05" min="0.2" /><div class="help">0.3–0.6 mm is typical for milled boards.</div></div>
+          <div class="row"><label>Min separation (mm)</label><input type="number" id="pcbSep" value="0.3" step="0.05" min="0.2" /><div class="help">Gap between traces and pads.</div></div>
+        </div>
+        <button id="btn-route">Auto-route</button>
+        <button class="secondary" id="btn-clear-routes">Clear routes</button>
+        <div class="help">Drag components to reposition; routes regenerate next time you click Auto-route.</div>
+      </div>
+
+      <div class="group">
+        <h3>Output</h3>
+        <button id="btn-send-convert">Send to Convert tab → G-code</button>
+        <button class="secondary" id="btn-export-gerber">Export Gerber files (.gbr / .gm1 / .drl)</button>
       </div>
     </aside>
     <section class="right">
       <canvas id="cv-pcb"></canvas>
+      <div class="hint"><b>Workflow:</b> Schematic → Import → drag components → Auto-route → Send to Convert.</div>
     </section>
   </section>
 </main>
@@ -199,10 +226,12 @@
 <script src="js/geometry.js"></script>
 <script src="js/converter.js"></script>
 <script src="js/schematic.js"></script>
+<script src="js/pcb.js"></script>
 <script>
   UI.initTabs();
   Converter.init();
   Schematic.init();
+  PCB.init();
 </script>
 </body>
 </html>
